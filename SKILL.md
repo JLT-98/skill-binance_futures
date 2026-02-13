@@ -1,210 +1,130 @@
 ---
-name: binance_futures
-description: Interact with Binance USDS-Margined Futures API for market data and trading.
+name: binance-api
+description: Comprehensive guide for Binance Spot and Futures APIs. Use when the user asks about Binance API endpoints, authentication (HMAC-SHA256), trading protocols, market data, or code examples for Python/JavaScript. Covers both Spot (api.binance.com) and USDS-M Futures (fapi.binance.com).
 ---
 
-# Binance USDS-Margined Futures Skill
+# Binance API Skill
 
-This skill allows agents to interact with the Binance USDS-Margined Futures API. It covers market data retrieval, account information, and order execution.
+This skill provides expert knowledge on the Binance Spot and Futures (USDS-M) APIs.
 
-## Prerequisites
+## Base URLs
 
--   **API Key & Secret**: You must have a valid Binance API Key and Secret Key.
--   **Base URL**:
-    -   Production: `https://fapi.binance.com`
-    -   Testnet: `https://testnet.binancefuture.com`
+- **Spot API**: `https://api.binance.com`
+- **USDS-M Futures API**: `https://fapi.binance.com`
 
-## Authentication
+## Authentication & Signing
 
-Binance Futures API uses HMAC SHA256 for authentication.
-Signed endpoints require `timestamp`, `signature`, and optional `recvWindow`.
+Most private endpoints (Trading, Account) require HMAC-SHA256 signatures.
 
-### Python Helper for Signing
+**Headers Required**:
+- `X-MBX-APIKEY`: Your API Key.
+- `Content-Type`: `application/x-www-form-urlencoded` (for POST/PUT).
+
+**Signature Process**:
+1. Construct the query string (e.g., `symbol=BTCUSDT&side=BUY&...&timestamp=1600000000000`).
+2. Order parameters alphabetical order is NOT required for signature, but best practice is to keep them organized.
+3. Compute `HMAC-SHA256(queryString, secretKey)`.
+4. Append `&signature=BASE64_HEX_OF_HMAC` to the query string.
+   *(Note: Binance expects valid hex string output of the HMAC, not Base64)*.
+
+### Python Signing Example
 
 ```python
-import time
 import hmac
 import hashlib
+import time
 import requests
 from urllib.parse import urlencode
 
-API_KEY = "YOUR_API_KEY"
-API_SECRET = "YOUR_SECRET_KEY"
-BASE_URL = "https://fapi.binance.com" # Use https://testnet.binancefuture.com for testnet
+API_KEY = "your_api_key"
+SECRET_KEY = "your_secret_key"
+BASE_URL = "https://api.binance.com" # or https://fapi.binance.com
 
-def get_headers():
-    return {
-        "X-MBX-APIKEY": API_KEY
-    }
-
-def send_signed_request(method, endpoint, params=None):
+def send_signed_request(method, path, params=None):
     if params is None:
         params = {}
     
-    # timestamp is mandatory
-    params['timestamp'] = int(time.time() * 1000)
+    # 1. Add timestamp
+    params["timestamp"] = int(time.time() * 1000)
     
-    # create signature
+    # 2. Prepare query string
     query_string = urlencode(params)
+    
+    # 3. Sign
     signature = hmac.new(
-        API_SECRET.encode('utf-8'),
-        query_string.encode('utf-8'),
+        SECRET_KEY.encode("utf-8"),
+        query_string.encode("utf-8"),
         hashlib.sha256
     ).hexdigest()
     
-    params['signature'] = signature
+    # 4. Append signature
+    url = f"{BASE_URL}{path}?{query_string}&signature={signature}"
     
-    url = f"{BASE_URL}{endpoint}"
+    headers = {"X-MBX-APIKEY": API_KEY}
     
-    try:
-        if method == "GET":
-            response = requests.get(url, headers=get_headers(), params=params)
-        elif method == "POST":
-            response = requests.post(url, headers=get_headers(), params=params)
-        elif method == "DELETE":
-            response = requests.delete(url, headers=get_headers(), params=params)
-        else:
-            return {"error": "Unsupported method"}
-            
-        return response.json()
-    except Exception as e:
-        return {"error": str(e)}
+    response = requests.request(method, url, headers=headers)
+    return response.json()
+
+# Example usage
+# print(send_signed_request("POST", "/api/v3/order", {"symbol": "BTCUSDT", "side": "BUY", "type": "LIMIT", ...}))
 ```
 
-## Market Data (Public Endpoints)
+### JavaScript (Node.js) Signing Example
 
-These endpoints do not require signing (except for higher rate limits sometimes, but usually public).
+```javascript
+const crypto = require('crypto');
+const axios = require('axios');
 
-### 1. Exchange Information
-Get all symbols and their trading rules.
+const API_KEY = 'your_api_key';
+const SECRET_KEY = 'your_secret_key';
+const BASE_URL = 'https://api.binance.com';
 
--   **Endpoint**: `GET /fapi/v1/exchangeInfo`
--   **Usage**:
-    ```python
-    url = f"{BASE_URL}/fapi/v1/exchangeInfo"
-    response = requests.get(url)
-    data = response.json() 
-    # print(data['symbols'])
-    ```
+async function sendSignedRequest(method, path, params = {}) {
+  params.timestamp = Date.now();
+  
+  // Convert object to query string
+  const queryString = new URLSearchParams(params).toString();
+  
+  const signature = crypto
+    .createHmac('sha256', SECRET_KEY)
+    .update(queryString)
+    .digest('hex');
+    
+  const url = `${BASE_URL}${path}?${queryString}&signature=${signature}`;
+  
+  try {
+    const response = await axios({
+      method: method,
+      url: url,
+      headers: { 'X-MBX-APIKEY': API_KEY }
+    });
+    return response.data;
+  } catch (error) {
+    console.error(error.response ? error.response.data : error.message);
+  }
+}
+```
 
-### 2. Kline/Candlestick Data
-Get historical price data (candles).
+## Error Handling
 
--   **Endpoint**: `GET /fapi/v1/klines`
--   **Parameters**:
-    -   `symbol` (str): e.g., "BTCUSDT"
-    -   `interval` (str): e.g., "1m", "1h", "1d"
-    -   `limit` (int, optional): Default 500, max 1500.
--   **Usage**:
-    ```python
-    params = {"symbol": "BTCUSDT", "interval": "1h", "limit": 5}
-    response = requests.get(f"{BASE_URL}/fapi/v1/klines", params=params)
-    print(response.json())
-    ```
+- **HTTP 403 (WAF Limit)**: You are violating WAF rules. Don't retry immediately.
+- **HTTP 429 (Rate Limit)**: Back off. Check `Retry-After` header.
+- **HTTP 418 (IP Ban)**: You have been auto-banned for repeated 429s.
+- **Code -1021 (Timestamp)**: `timestamp` is outside the `recvWindow` (default 5000ms). Sync your system clock.
+- **Code -2010 (Account)**: Insufficient balance or other validation failure.
 
-### 3. Recent Trades
-Get recent market trades.
+## API References
 
--   **Endpoint**: `GET /fapi/v1/trades`
--   **Parameters**: `symbol`, `limit` (max 1000).
+For specific endpoint details, refer to:
 
-### 4. Order Book
-Get order book depth.
+- **Spot API**: [Spot Reference](references/spot.md)
+  - Market Data, account info, placing orders (Standard Limit/Market/OCO).
+  
+- **Futures API**: [Futures Reference](references/futures.md)
+  - USDS-M Futures trading, Position Risk, Leverage, Mark Price.
 
--   **Endpoint**: `GET /fapi/v1/depth`
--   **Parameters**: `symbol`, `limit` (5, 10, 20, 50, 100, 500, 1000).
+## Common Rate Limits
 
-### 5. 24hr Ticker Price Change
-Get 24hr rolling window price change statistics.
-
--   **Endpoint**: `GET /fapi/v1/ticker/24hr`
--   **Parameters**: `symbol` (optional, returns all if omitted).
-
-### 6. Symbol Order Book Ticker
-Best bid/ask price and quantity.
-
--   **Endpoint**: `GET /fapi/v1/ticker/bookTicker`
--   **Parameters**: `symbol` (optional).
--   **Usage**:
-    ```python
-    params = {"symbol": "BTCUSDT"}
-    response = requests.get(f"{BASE_URL}/fapi/v1/ticker/bookTicker", params=params)
-    print(response.json())
-    ```
-
-## Account & Trading (Signed Endpoints)
-
-Use the `send_signed_request` helper function defined above.
-
-### 1. Account Information
-Get current account information (balances, positions).
-
--   **Endpoint**: `GET /fapi/v2/account`
--   **Usage**:
-    ```python
-    account_info = send_signed_request("GET", "/fapi/v2/account")
-    print(account_info)
-    # Check 'positions' field for open positions
-    ```
-
-### 2. New Order
-Send a new order.
-
--   **Endpoint**: `POST /fapi/v1/order`
--   **Mandatory Parameters**:
-    -   `symbol` (str): e.g., "BTCUSDT"
-    -   `side` (str): "BUY" or "SELL"
-    -   `type` (str): "LIMIT", "MARKET", "STOP", etc.
-    -   `quantity` (float/str): Quantity to buy/sell.
--   **Conditional Parameters**:
-    -   `price`: Required for LIMIT orders.
-    -   `timeInForce`: Required for LIMIT orders (e.g., "GTC").
-    -   `reduceOnly`: "true" or "false".
--   **Usage (Market Order)**:
-    ```python
-    params = {
-        "symbol": "BTCUSDT",
-        "side": "BUY",
-        "type": "MARKET",
-        "quantity": 0.001
-    }
-    order = send_signed_request("POST", "/fapi/v1/order", params)
-    print(order)
-    ```
--   **Usage (Limit Order)**:
-    ```python
-    params = {
-        "symbol": "BTCUSDT",
-        "side": "BUY",
-        "type": "LIMIT",
-        "quantity": 0.001,
-        "price": 50000,
-        "timeInForce": "GTC"
-    }
-    order = send_signed_request("POST", "/fapi/v1/order", params)
-    print(order)
-    ```
-
-### 3. Query Order
-Check an order's status.
-
--   **Endpoint**: `GET /fapi/v1/order`
--   **Parameters**: `symbol` AND (`orderId` OR `origClientOrderId`).
--   **Usage**:
-    ```python
-    params = {"symbol": "BTCUSDT", "orderId": 12345678}
-    status = send_signed_request("GET", "/fapi/v1/order", params)
-    print(status)
-    ```
-
-### 4. Cancel Order
-Cancel an active order.
-
--   **Endpoint**: `DELETE /fapi/v1/order`
--   **Parameters**: `symbol` AND (`orderId` OR `origClientOrderId`).
--   **Usage**:
-    ```python
-    params = {"symbol": "BTCUSDT", "orderId": 12345678}
-    cancel_response = send_signed_request("DELETE", "/fapi/v1/order", params)
-    print(cancel_response)
-    ```
+- **Spot Order Rate**: Limits counted per 10s (e.g., 100 requests/10s).
+- **Futures Order Rate**: Limits counted per 10s and 1m.
+- **Request Weight**: Each endpoint has a weight (usually 1 for simple reads, higher for orders/heavy queries). Headers `X-MBX-USED-WEIGHT` tell you your usage.
